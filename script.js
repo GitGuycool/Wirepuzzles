@@ -1,4 +1,5 @@
-const canvas = document.getElementById('gameCanvas');
+
+    const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
 // State Management
@@ -8,8 +9,8 @@ let isEditorMode = true;
 
 let gridSize = 20; 
 let nodes = [];          // {x, y, id, label}
-let paths = [];          // Auto-calculated node paths [[{x,y}, ...], ...]
-let permanentPaths = []; // Manually drawn lines that act as solid walls [[{x,y}, ...], ...]
+let paths = [];          // Auto-calculated node paths (Used in Editor Mode)
+let permanentPaths = []; // Player-drawn or manually placed lines [[{x,y}, ...], ...]
 
 let selectedNode = null;
 let wireStartNode = null;
@@ -54,43 +55,60 @@ function generatePlayLevel() {
     document.getElementById('editor-controls').style.display = 'none';
     switchScreen('editor-screen');
 
-    let nodeCount, maxDist;
+    let pairCount, maxDist;
     if (currentDifficulty === 'easy') {
-        nodeCount = 4;
-        maxDist = Math.floor(gridSize * 0.25);
+        pairCount = 3; // 3 pairs (6 nodes total)
+        maxDist = Math.floor(gridSize * 0.3);
     } else if (currentDifficulty === 'medium') {
-        nodeCount = 8;
-        maxDist = Math.floor(gridSize * 0.5);
+        pairCount = 5; // 5 pairs (10 nodes total)
+        maxDist = Math.floor(gridSize * 0.6);
     } else if (currentDifficulty === 'hard') {
-        nodeCount = 14;
+        pairCount = 8; // 8 pairs (16 nodes total)
         maxDist = gridSize;
     } else { 
-        nodeCount = parseInt(document.getElementById('custom-nodes').value) || 6;
+        pairCount = Math.floor((parseInt(document.getElementById('custom-nodes').value) || 6) / 2) || 2;
         maxDist = parseInt(document.getElementById('custom-dist').value) || 10;
     }
 
-    let baseNode = { x: Math.floor(gridSize/2), y: Math.floor(gridSize/2), id: Date.now(), label: 1 };
-    nodes.push(baseNode);
+    // Generate matching pairs of nodes
+    let labelCounter = 1;
+    for (let i = 0; i < pairCount; i++) {
+        let placedStart = false;
+        let startNode = null;
 
-    for (let i = 1; i < nodeCount; i++) {
+        // Place first node of the pair
         let attempts = 0;
-        while(attempts < 100) {
-            let refNode = nodes[Math.floor(Math.random() * nodes.length)];
-            let angle = Math.random() * Math.PI * 2;
-            let dist = currentDifficulty === 'easy' ? Math.floor(Math.random() * maxDist) + 2 : Math.floor(Math.random() * (maxDist - 3)) + 3;
-            
-            let targetX = Math.max(0, Math.min(gridSize - 1, Math.floor(refNode.x + Math.cos(angle) * dist)));
-            let targetY = Math.max(0, Math.min(gridSize - 1, Math.floor(refNode.y + Math.sin(angle) * dist)));
-
-            if (!nodes.some(n => n.x === targetX && n.y === targetY)) {
-                nodes.push({ x: targetX, y: targetY, id: Date.now() + i, label: i + 1 });
-                break;
+        while (!placedStart && attempts < 100) {
+            let rx = Math.floor(Math.random() * gridSize);
+            let ry = Math.floor(Math.random() * gridSize);
+            if (!nodes.some(n => n.x === rx && n.y === ry)) {
+                startNode = { x: rx, y: ry, id: Date.now() + Math.random(), label: labelCounter };
+                nodes.push(startNode);
+                placedStart = true;
             }
             attempts++;
         }
+
+        // Place matching pair node within distance bounds
+        let placedEnd = false;
+        attempts = 0;
+        while (!placedEnd && attempts < 100) {
+            let angle = Math.random() * Math.PI * 2;
+            let dist = Math.floor(Math.random() * (maxDist - 2)) + 2;
+            let tx = Math.max(0, Math.min(gridSize - 1, Math.floor(startNode.x + Math.cos(angle) * dist)));
+            let ty = Math.max(0, Math.min(gridSize - 1, Math.floor(startNode.y + Math.sin(angle) * dist)));
+
+            if (!nodes.some(n => n.x === tx && n.y === ty)) {
+                nodes.push({ x: tx, y: ty, id: Date.now() + Math.random(), label: labelCounter });
+                placedEnd = true;
+            }
+            attempts++;
+        }
+        labelCounter++;
     }
     
-    runAIRealTimeCheck();
+    // In play mode, we don't calculate live paths for them!
+    updateConnectivityUI();
     draw();
 }
 
@@ -107,9 +125,11 @@ function initEditor() {
 }
 
 // ------------------------------------
-// DUAL-LAYER REAL-TIME AI SOLVER
+// DUAL-LAYER REAL-TIME AI SOLVER (EDITOR ONLY)
 // ------------------------------------
 function runAIRealTimeCheck() {
+    if (!isEditorMode) return; // Do not auto-solve in Play mode!
+
     let unblockedPaths = [];
     let staticObstacles = new Set();
     
@@ -119,22 +139,30 @@ function runAIRealTimeCheck() {
 
     let activeObstacles = new Set(staticObstacles);
 
-    for (let i = paths.length - 1; i >= 0; i--) {
-        let pathObj = paths[i];
-        if (!pathObj || pathObj.length < 2) continue;
-        
-        let start = pathObj[0];
-        let end = pathObj[pathObj.length - 1];
+    // Group editor nodes by matching numbers to auto-pathfind pairs
+    let pairs = {};
+    nodes.forEach(n => {
+        if (!pairs[n.label]) pairs[n.label] = [];
+        pairs[n.label].push(n);
+    });
 
-        let solvedRoute = findAStarPath(start, end, activeObstacles);
-        
-        if (solvedRoute) {
-            unblockedPaths.unshift(solvedRoute);
-            solvedRoute.forEach(pt => activeObstacles.add(`${pt.x},${pt.y}`));
-        } else {
-            unblockedPaths.unshift([start, end]);
+    // Auto-pathfind complete node pairs in reverse order (newer pairs prioritize layout)
+    let labels = Object.keys(pairs).reverse();
+    labels.forEach(label => {
+        let pairList = pairs[label];
+        if (pairList.length === 2) {
+            let start = pairList[0];
+            let end = pairList[1];
+
+            let solvedRoute = findAStarPath({x: start.x, y: start.y}, {x: end.x, y: end.y}, activeObstacles);
+            if (solvedRoute) {
+                unblockedPaths.unshift(solvedRoute);
+                solvedRoute.forEach(pt => activeObstacles.add(`${pt.x},${pt.y}`));
+            } else {
+                unblockedPaths.unshift([{x: start.x, y: start.y}, {x: end.x, y: end.y}]);
+            }
         }
-    }
+    });
     
     paths = unblockedPaths;
     updateConnectivityUI();
@@ -192,48 +220,42 @@ function findAStarPath(start, end, obstacles) {
 
 function updateConnectivityUI() {
     if (nodes.length === 0) return;
-    let adjacency = {};
-    nodes.forEach(n => adjacency[n.id] = []);
-    
-    let allPaths = [...paths, ...permanentPaths];
-    allPaths.forEach(p => {
+
+    let totalPairs = 0;
+    let connectedPairs = 0;
+
+    let pairs = {};
+    nodes.forEach(n => {
+        if (!pairs[n.label]) pairs[n.label] = [];
+        pairs[n.label].push(n);
+    });
+
+    Object.keys(pairs).forEach(label => {
+        if (pairs[label].length === 2) totalPairs++;
+    });
+
+    let allActivePaths = [...paths, ...permanentPaths];
+    allActivePaths.forEach(p => {
         if (!p || p.length < 2) return;
         let n1 = nodes.find(n => n.x === p[0].x && n.y === p[0].y);
         let n2 = nodes.find(n => n.x === p[p.length-1].x && n.y === p[p.length-1].y);
-        if (n1 && n2) {
-            adjacency[n1.id].push(n2.id);
-            adjacency[n2.id].push(n1.id);
+        if (n1 && n2 && n1.label === n2.label) {
+            connectedPairs++;
         }
     });
 
-    let visited = new Set();
-    let queue = [nodes[0].id];
-    visited.add(nodes[0].id);
-
-    while (queue.length > 0) {
-        let curr = queue.shift();
-        if (adjacency[curr]) {
-            adjacency[curr].forEach(neighbor => {
-                if (!visited.has(neighbor)) {
-                    visited.add(neighbor);
-                    queue.push(neighbor);
-                }
-            });
-        }
-    }
-
     const status = document.getElementById('status-bar');
-    if (visited.size === nodes.length) {
-        status.innerText = "AI Status: ✅ Valid Level! All nodes are reached/connectable.";
+    if (totalPairs > 0 && connectedPairs === totalPairs) {
+        status.innerText = `AI Status: ✅ Perfect! All ${connectedPairs}/${totalPairs} pairs correctly linked.`;
         status.style.color = "#10b981";
     } else {
-        status.innerText = "AI Status: ⚠️ Warning: Isolated nodes detected.";
+        status.innerText = `AI Status: ⚠️ Verification: Connected ${connectedPairs}/${totalPairs} target matching pairs.`;
         status.style.color = "#f59e0b";
     }
 }
 
 // ------------------------------------
-// CANVAS INTERACTION MOUSE/TOUCH HANDLERS
+// CANVAS INTERACTION HANDLERS
 // ------------------------------------
 canvas.addEventListener('mousedown', (e) => {
     const rect = canvas.getBoundingClientRect();
@@ -245,19 +267,39 @@ canvas.addEventListener('mousedown', (e) => {
 
     if (isEditorMode) {
         if (currentTool === 'node' && !clickedNode) {
-            nodes.push({ x: gridX, y: gridY, id: Date.now(), label: nodes.length + 1 });
+            // Find existing count for this specific number label layer
+            let pairs = {};
+            nodes.forEach(n => {
+                if(!pairs[n.label]) pairs[n.label] = 0;
+                pairs[n.label]++;
+            });
+            let nextLabel = 1;
+            while(pairs[nextLabel] && pairs[nextLabel] >= 2) {
+                nextLabel++;
+            }
+            nodes.push({ x: gridX, y: gridY, id: Date.now(), label: nextLabel });
         } else if (currentTool === 'move' && clickedNode) {
             selectedNode = clickedNode;
         } else if (currentTool === 'wire' && clickedNode) {
             wireStartNode = clickedNode;
         }
     } else {
+        // Play Mode: Users drag between matching node numbers to build lines manually
         if (clickedNode) {
             if (!wireStartNode) {
                 wireStartNode = clickedNode;
             } else {
-                if (wireStartNode.id !== clickedNode.id) {
-                    paths.push([{x: wireStartNode.x, y: wireStartNode.y}, {x: clickedNode.x, y: clickedNode.y}]);
+                // STATED RULE: Can only connect nodes with matching numbers!
+                if (wireStartNode.id !== clickedNode.id && wireStartNode.label === clickedNode.label) {
+                    let staticObstacles = new Set();
+                    permanentPaths.forEach(path => path.forEach(pt => staticObstacles.add(`${pt.x},${pt.y}`)));
+                    
+                    let drawRoute = findAStarPath({x: wireStartNode.x, y: wireStartNode.y}, {x: clickedNode.x, y: clickedNode.y}, staticObstacles);
+                    if (drawRoute) {
+                        permanentPaths.push(drawRoute);
+                    } else {
+                        permanentPaths.push([{x: wireStartNode.x, y: wireStartNode.y}, {x: clickedNode.x, y: clickedNode.y}]);
+                    }
                 }
                 wireStartNode = null;
             }
@@ -268,16 +310,12 @@ canvas.addEventListener('mousedown', (e) => {
 });
 
 canvas.addEventListener('mousemove', (e) => {
-    if (currentTool === 'move' && selectedNode) {
+    if (isEditorMode && currentTool === 'move' && selectedNode) {
         const rect = canvas.getBoundingClientRect();
         const cellSize = canvas.width / gridSize;
         const gridX = Math.max(0, Math.min(gridSize-1, Math.floor((e.clientX - rect.left) / cellSize)));
         const gridY = Math.max(0, Math.min(gridSize-1, Math.floor((e.clientY - rect.top) / cellSize)));
         
-        paths.forEach(p => {
-            if (p[0].x === selectedNode.x && p[0].y === selectedNode.y) { p[0].x = gridX; p[0].y = gridY; }
-            if (p[p.length-1].x === selectedNode.x && p[p.length-1].y === selectedNode.y) { p[p.length-1].x = gridX; p[p.length-1].y = gridY; }
-        });
         permanentPaths.forEach(p => {
             if (p[0].x === selectedNode.x && p[0].y === selectedNode.y) { p[0].x = gridX; p[0].y = gridY; }
             if (p[p.length-1].x === selectedNode.x && p[p.length-1].y === selectedNode.y) { p[p.length-1].x = gridX; p[p.length-1].y = gridY; }
@@ -291,22 +329,20 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 canvas.addEventListener('mouseup', (e) => {
-    if (currentTool === 'wire' && wireStartNode) {
+    if (isEditorMode && currentTool === 'wire' && wireStartNode) {
         const rect = canvas.getBoundingClientRect();
         const cellSize = canvas.width / gridSize;
         const gridX = Math.floor((e.clientX - rect.left) / cellSize);
         const gridY = Math.floor((e.clientY - rect.top) / cellSize);
         let endNode = nodes.find(n => n.x === gridX && n.y === gridY);
 
-        if (endNode && endNode.id !== wireStartNode.id) {
+        if (endNode && endNode.id !== wireStartNode.id && endNode.label === wireStartNode.label) {
             let staticObstacles = new Set();
             permanentPaths.forEach(path => path.forEach(pt => staticObstacles.add(`${pt.x},${pt.y}`)));
             
             let manualRoute = findAStarPath({x: wireStartNode.x, y: wireStartNode.y}, {x: endNode.x, y: endNode.y}, staticObstacles);
             if (manualRoute) {
                 permanentPaths.push(manualRoute);
-            } else {
-                permanentPaths.push([{x: wireStartNode.x, y: wireStartNode.y}, {x: endNode.x, y: endNode.y}]);
             }
         }
         wireStartNode = null;
@@ -330,22 +366,27 @@ function draw() {
         ctx.beginPath(); ctx.moveTo(0, i*cellSize); ctx.lineTo(canvas.width, i*cellSize); ctx.stroke();
     }
 
+    // Render Set in Stone Permanent / Player Drawn Paths (Bold Crimson)
     permanentPaths.forEach(path => {
         ctx.strokeStyle = '#ef4444'; 
         ctx.lineWidth = Math.max(3, cellSize * 0.4);
         renderPathLine(path, cellSize);
     });
 
-    paths.forEach(path => {
-        ctx.strokeStyle = '#6366f1'; 
-        ctx.lineWidth = Math.max(2, cellSize * 0.3);
-        renderPathLine(path, cellSize);
-    });
+    // Render Editor Mode Dynamic AI Assistant Guidelines (Indigo)
+    if (isEditorMode) {
+        paths.forEach(path => {
+            ctx.strokeStyle = '#6366f1'; 
+            ctx.lineWidth = Math.max(2, cellSize * 0.3);
+            renderPathLine(path, cellSize);
+        });
+    }
 
+    // Draw Node Pins
     nodes.forEach(n => {
         let cx = n.x * cellSize + cellSize/2;
         let cy = n.y * cellSize + cellSize/2;
-        let radius = Math.max(6, cellSize * 0.4);
+        let radius = Math.max(8, cellSize * 0.45);
 
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -356,7 +397,7 @@ function draw() {
         ctx.stroke();
 
         ctx.fillStyle = '#fff';
-        ctx.font = `${radius}px sans-serif`;
+        ctx.font = `bold ${radius * 0.9}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(n.label, cx, cy);
@@ -364,6 +405,7 @@ function draw() {
 }
 
 function renderPathLine(path, cellSize) {
+    if(!path || path.length < 2) return;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -387,7 +429,7 @@ function clearMap() {
 // EXPORT & IMPORT UTILITIES
 // ------------------------------------
 function exportMap() {
-    const levelState = { gridSize, nodes, paths, permanentPaths };
+    const levelState = { gridSize, nodes, permanentPaths };
     const code = btoa(JSON.stringify(levelState));
     navigator.clipboard.writeText(code);
     alert("Level code copied! Send this to your friend.");
@@ -409,7 +451,7 @@ function loadLevel(brandNew) {
             document.getElementById('game-title').innerText = "Play Mode (Imported)";
             document.getElementById('editor-controls').style.display = 'none';
         } else {
-            paths = decoded.paths || []; 
+            paths = []; 
             permanentPaths = decoded.permanentPaths || [];
             isEditorMode = true;
             document.getElementById('game-title').innerText = "Editor Mode (Imported)";
@@ -422,5 +464,5 @@ function loadLevel(brandNew) {
     } catch(err) {
         alert("Failed to decode level code.");
     }
-                            }
-                  
+}
+    
