@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wire Connect Puzzle Studio</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="menu-screen" class="screen">
+        <h1>🔌 Wire Connect Studio</h1>
+        <button onclick="switchScreen('play-setup-screen')">Play Menu</button>
+        <button onclick="switchScreen('editor-screen'); initEditor();">Editor</button>
+        <button onclick="switchScreen('load-screen')">Load Level</button>
+    </div>
+
+    <div id="play-setup-screen" class="screen hidden">
+        <h2>Select Game Mode</h2>
+        <div class="control-group">
+            <label>Grid Size (Max 100): </label>
+            <input type="number" id="play-grid-size" value="20" min="5" max="100">
+        </div>
+        <div class="control-group">
+            <label>Difficulty: </label>
+            <button onclick="setDifficulty('easy')">Easy</button>
+            <button onclick="setDifficulty('medium')">Medium</button>
+            <button onclick="setDifficulty('hard')">Hard</button>
+            <button onclick="toggleCustomSettings()">Custom</button>
+        </div>
+        
+        <div id="custom-settings" class="hidden">
+            <div class="control-group">
+                <label>Node Count: </label>
+                <input type="number" id="custom-nodes" value="6" min="2">
+            </div>
+            <div class="control-group">
+                <label>Max Connection Distance: </label>
+                <input type="number" id="custom-dist" value="5" min="2">
+            </div>
+        </div>
+        
+        <button id="start-game-btn" class="action-btn" onclick="generatePlayLevel()">Generate & Play</button>
+        <button onclick="switchScreen('menu-screen')">Back</button>
+    </div>
+
+    <div id="load-screen" class="screen hidden">
+        <h2>Import Map</h2>
+        <textarea id="import-code" placeholder="Paste level code here..."></textarea>
+        <div class="control-group">
+            <button onclick="loadLevel(true)">Play Brand New State</button>
+            <button onclick="loadLevel(false)">Resume Saved State</button>
+        </div>
+        <button onclick="switchScreen('menu-screen')">Back</button>
+    </div>
+
+    <div id="editor-screen" class="screen hidden">
+        <h2 id="game-title">Editor Mode</h2>
+        <div id="editor-controls">
+            <button id="tool-node" onclick="setTool('node')" class="active">Place Node</button>
+            <button id="tool-move" onclick="setTool('move')">Move Node</button>
+            <button id="tool-wire" onclick="setTool('wire')">Draw Wires</button>
+            <button onclick="clearMap()">Clear</button>
+            <button onclick="exportMap()">Export/Share Code</button>
+            <button onclick="switchScreen('menu-screen')">Main Menu</button>
+        </div>
+        <div id="status-bar">AI Status: Waiting...</div>
+        <canvas id="gameCanvas" width="600" height="600"></canvas>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+
