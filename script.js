@@ -1,5 +1,4 @@
-
-    const canvas = document.getElementById('gameCanvas');
+const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
 // State Management
@@ -57,26 +56,24 @@ function generatePlayLevel() {
 
     let pairCount, maxDist;
     if (currentDifficulty === 'easy') {
-        pairCount = 3; // 3 pairs (6 nodes total)
+        pairCount = 3; 
         maxDist = Math.floor(gridSize * 0.3);
     } else if (currentDifficulty === 'medium') {
-        pairCount = 5; // 5 pairs (10 nodes total)
+        pairCount = 5; 
         maxDist = Math.floor(gridSize * 0.6);
     } else if (currentDifficulty === 'hard') {
-        pairCount = 8; // 8 pairs (16 nodes total)
+        pairCount = 8; 
         maxDist = gridSize;
     } else { 
         pairCount = Math.floor((parseInt(document.getElementById('custom-nodes').value) || 6) / 2) || 2;
         maxDist = parseInt(document.getElementById('custom-dist').value) || 10;
     }
 
-    // Generate matching pairs of nodes
     let labelCounter = 1;
     for (let i = 0; i < pairCount; i++) {
         let placedStart = false;
         let startNode = null;
 
-        // Place first node of the pair
         let attempts = 0;
         while (!placedStart && attempts < 100) {
             let rx = Math.floor(Math.random() * gridSize);
@@ -89,7 +86,6 @@ function generatePlayLevel() {
             attempts++;
         }
 
-        // Place matching pair node within distance bounds
         let placedEnd = false;
         attempts = 0;
         while (!placedEnd && attempts < 100) {
@@ -107,7 +103,6 @@ function generatePlayLevel() {
         labelCounter++;
     }
     
-    // In play mode, we don't calculate live paths for them!
     updateConnectivityUI();
     draw();
 }
@@ -125,10 +120,10 @@ function initEditor() {
 }
 
 // ------------------------------------
-// DUAL-LAYER REAL-TIME AI SOLVER (EDITOR ONLY)
+// DUAL-LAYER REAL-TIME AI SOLVER
 // ------------------------------------
 function runAIRealTimeCheck() {
-    if (!isEditorMode) return; // Do not auto-solve in Play mode!
+    if (!isEditorMode) return; 
 
     let unblockedPaths = [];
     let staticObstacles = new Set();
@@ -139,14 +134,12 @@ function runAIRealTimeCheck() {
 
     let activeObstacles = new Set(staticObstacles);
 
-    // Group editor nodes by matching numbers to auto-pathfind pairs
     let pairs = {};
     nodes.forEach(n => {
         if (!pairs[n.label]) pairs[n.label] = [];
         pairs[n.label].push(n);
     });
 
-    // Auto-pathfind complete node pairs in reverse order (newer pairs prioritize layout)
     let labels = Object.keys(pairs).reverse();
     labels.forEach(label => {
         let pairList = pairs[label];
@@ -255,19 +248,36 @@ function updateConnectivityUI() {
 }
 
 // ------------------------------------
-// CANVAS INTERACTION HANDLERS
+// MOBILE SMART COORD GETTER
 // ------------------------------------
-canvas.addEventListener('mousedown', (e) => {
+function getGridCoords(e) {
     const rect = canvas.getBoundingClientRect();
     const cellSize = canvas.width / gridSize;
-    const gridX = Math.floor((e.clientX - rect.left) / cellSize);
-    const gridY = Math.floor((e.clientY - rect.top) / cellSize);
+    
+    // Support standard mouse interactions or mobile screen taps
+    let clientX = e.clientX;
+    let clientY = e.clientY;
+    
+    if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+    } else if (e.changedTouches && e.changedTouches.length > 0) {
+        clientX = e.changedTouches[0].clientX;
+        clientY = e.changedTouches[0].clientY;
+    }
 
-    let clickedNode = nodes.find(n => n.x === gridX && n.y === gridY);
+    const gridX = Math.floor((clientX - rect.left) / cellSize);
+    const gridY = Math.floor((clientY - rect.top) / cellSize);
+    return { x: Math.max(0, Math.min(gridSize - 1, gridX)), y: Math.max(0, Math.min(gridSize - 1, gridY)) };
+}
+
+function handleStart(e) {
+    e.preventDefault();
+    const coords = getGridCoords(e);
+    let clickedNode = nodes.find(n => n.x === coords.x && n.y === coords.y);
 
     if (isEditorMode) {
         if (currentTool === 'node' && !clickedNode) {
-            // Find existing count for this specific number label layer
             let pairs = {};
             nodes.forEach(n => {
                 if(!pairs[n.label]) pairs[n.label] = 0;
@@ -277,19 +287,17 @@ canvas.addEventListener('mousedown', (e) => {
             while(pairs[nextLabel] && pairs[nextLabel] >= 2) {
                 nextLabel++;
             }
-            nodes.push({ x: gridX, y: gridY, id: Date.now(), label: nextLabel });
+            nodes.push({ x: coords.x, y: coords.y, id: Date.now(), label: nextLabel });
         } else if (currentTool === 'move' && clickedNode) {
             selectedNode = clickedNode;
         } else if (currentTool === 'wire' && clickedNode) {
             wireStartNode = clickedNode;
         }
     } else {
-        // Play Mode: Users drag between matching node numbers to build lines manually
         if (clickedNode) {
             if (!wireStartNode) {
                 wireStartNode = clickedNode;
             } else {
-                // STATED RULE: Can only connect nodes with matching numbers!
                 if (wireStartNode.id !== clickedNode.id && wireStartNode.label === clickedNode.label) {
                     let staticObstacles = new Set();
                     permanentPaths.forEach(path => path.forEach(pt => staticObstacles.add(`${pt.x},${pt.y}`)));
@@ -307,34 +315,28 @@ canvas.addEventListener('mousedown', (e) => {
     }
     runAIRealTimeCheck();
     draw();
-});
+}
 
-canvas.addEventListener('mousemove', (e) => {
-    if (isEditorMode && currentTool === 'move' && selectedNode) {
-        const rect = canvas.getBoundingClientRect();
-        const cellSize = canvas.width / gridSize;
-        const gridX = Math.max(0, Math.min(gridSize-1, Math.floor((e.clientX - rect.left) / cellSize)));
-        const gridY = Math.max(0, Math.min(gridSize-1, Math.floor((e.clientY - rect.top) / cellSize)));
-        
-        permanentPaths.forEach(p => {
-            if (p[0].x === selectedNode.x && p[0].y === selectedNode.y) { p[0].x = gridX; p[0].y = gridY; }
-            if (p[p.length-1].x === selectedNode.x && p[p.length-1].y === selectedNode.y) { p[p.length-1].x = gridX; p[p.length-1].y = gridY; }
-        });
+function handleMove(e) {
+    if (!isEditorMode || currentTool !== 'move' || !selectedNode) return;
+    e.preventDefault();
+    const coords = getGridCoords(e);
+    
+    permanentPaths.forEach(p => {
+        if (p[0].x === selectedNode.x && p[0].y === selectedNode.y) { p[0].x = coords.x; p[0].y = coords.y; }
+        if (p[p.length-1].x === selectedNode.x && p[p.length-1].y === selectedNode.y) { p[p.length-1].x = coords.x; p[p.length-1].y = coords.y; }
+    });
 
-        selectedNode.x = gridX;
-        selectedNode.y = gridY;
-        runAIRealTimeCheck();
-        draw();
-    }
-});
+    selectedNode.x = coords.x;
+    selectedNode.y = coords.y;
+    runAIRealTimeCheck();
+    draw();
+}
 
-canvas.addEventListener('mouseup', (e) => {
+function handleEnd(e) {
     if (isEditorMode && currentTool === 'wire' && wireStartNode) {
-        const rect = canvas.getBoundingClientRect();
-        const cellSize = canvas.width / gridSize;
-        const gridX = Math.floor((e.clientX - rect.left) / cellSize);
-        const gridY = Math.floor((e.clientY - rect.top) / cellSize);
-        let endNode = nodes.find(n => n.x === gridX && n.y === gridY);
+        const coords = getGridCoords(e);
+        let endNode = nodes.find(n => n.x === coords.x && n.y === coords.y);
 
         if (endNode && endNode.id !== wireStartNode.id && endNode.label === wireStartNode.label) {
             let staticObstacles = new Set();
@@ -350,7 +352,16 @@ canvas.addEventListener('mouseup', (e) => {
         draw();
     }
     selectedNode = null;
-});
+}
+
+// Bind both Desktop Mouse and Mobile Touch inputs natively
+canvas.addEventListener('mousedown', handleStart);
+canvas.addEventListener('mousemove', handleMove);
+canvas.addEventListener('mouseup', handleEnd);
+
+canvas.addEventListener('touchstart', handleStart, { passive: false });
+canvas.addEventListener('touchmove', handleMove, { passive: false });
+canvas.addEventListener('touchend', handleEnd, { passive: false });
 
 // ------------------------------------
 // GRAPHICS RENDERING SYSTEM
@@ -366,14 +377,12 @@ function draw() {
         ctx.beginPath(); ctx.moveTo(0, i*cellSize); ctx.lineTo(canvas.width, i*cellSize); ctx.stroke();
     }
 
-    // Render Set in Stone Permanent / Player Drawn Paths (Bold Crimson)
     permanentPaths.forEach(path => {
         ctx.strokeStyle = '#ef4444'; 
         ctx.lineWidth = Math.max(3, cellSize * 0.4);
         renderPathLine(path, cellSize);
     });
 
-    // Render Editor Mode Dynamic AI Assistant Guidelines (Indigo)
     if (isEditorMode) {
         paths.forEach(path => {
             ctx.strokeStyle = '#6366f1'; 
@@ -382,7 +391,6 @@ function draw() {
         });
     }
 
-    // Draw Node Pins
     nodes.forEach(n => {
         let cx = n.x * cellSize + cellSize/2;
         let cy = n.y * cellSize + cellSize/2;
@@ -464,5 +472,5 @@ function loadLevel(brandNew) {
     } catch(err) {
         alert("Failed to decode level code.");
     }
-}
-    
+    }
+        
